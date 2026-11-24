@@ -57,7 +57,13 @@ fn debit_balance(
 /// Initializes the treasury contract with an admin and token address.
 pub fn init(env: &Env, admin: &Address, token: &Address) -> Result<(), TreasuryError> {
     admin.require_auth();
+ fix/governance-quorum-init-guards
+    if env.storage().instance().has(&DataKey::Admin) {
+        return Err(TreasuryError::AlreadyInitialized);
+    }
 
+
+ master
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::Token, token);
     env.storage().instance().set(&DataKey::Balance, &0i128);
