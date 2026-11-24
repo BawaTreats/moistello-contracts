@@ -259,6 +259,15 @@ impl Staking {
     ) -> Result<(), types::StakingError> {
         contract::create_slash_notice(&env, &admin, &user, amount)
     }
+
+    /// #445 — Paginated active stakers query.
+    pub fn query_stakers_page(
+        env: Env,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<types::StakersPage, types::StakingError> {
+        contract::query_stakers_page(&env, cursor, limit)
+    }
 }
 
 #[cfg(test)]

@@ -390,11 +390,7 @@ pub fn get_total_staked(env: &Env) -> i128 {
 /// silently capped at `MAX_STAKERS_PAGE_SIZE` so a single call can never return an
 /// unbounded result.  Pass the returned `next_cursor` as the next call's `cursor`
 /// to walk the full list; the list is exhausted when `next_cursor == total`.
-pub fn query_stakers_page(
-    env: &Env,
-    cursor: u32,
-    limit: u32,
-) -> Result<StakersPage, StakingError> {
+pub fn query_stakers_page(env: &Env, cursor: u32, limit: u32) -> Result<StakersPage, StakingError> {
     let stakers: Vec<Address> = env
         .storage()
         .persistent()
@@ -410,9 +406,7 @@ pub fn query_stakers_page(
     let mut entries: Vec<StakerEntry> = Vec::new(env);
     let mut i = start;
     while i < end {
-        let address = stakers
-            .get(i)
-            .ok_or(StakingError::StakerIndexOutOfRange)?;
+        let address = stakers.get(i).ok_or(StakingError::StakerIndexOutOfRange)?;
         let amount: i128 = env
             .storage()
             .instance()
@@ -420,7 +414,7 @@ pub fn query_stakers_page(
             .map(|pos| pos.amount)
             .unwrap_or(0);
         entries.push_back(StakerEntry { address, amount });
-        i += 1;
+        i = i.checked_add(1).ok_or(StakingError::Overflow)?;
     }
 
     Ok(StakersPage {
@@ -946,8 +940,11 @@ pub fn execute_slash(env: &Env, admin: &Address, user: &Address) -> Result<(), S
         .map_err(|_| StakingError::InvalidAmount)?;
 
     // Update the stake position
+    let multiplier = stake_position.period.multiplier();
     stake_position.amount = new_amount;
-    stake_position.voting_power = new_amount * stake_position.period.multiplier() as i128;
+    stake_position.voting_power = new_amount
+        .checked_mul(multiplier as i128)
+        .ok_or(StakingError::Overflow)?;
     env.storage()
         .instance()
         .set(&DataKey::Stake(user.clone()), &stake_position);

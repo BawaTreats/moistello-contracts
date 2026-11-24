@@ -666,6 +666,97 @@ fn test_slash_unauthorized() {
     assert_eq!(result, Err(Ok(StakingError::Unauthorized)));
 }
 
+#[test]
+fn test_execute_slash_voting_power_bounds_and_overflow() {
+    let (env, admin, user, token) = setup_test_env();
+    let staking_client = deploy_staking_contract(&env, &admin, &token);
+
+    // Stake with period = 12 months (multiplier = 4)
+    staking_client.stake(&user, &100_0000000, &12);
+    staking_client.set_slash_notice_period(&admin, &10u64);
+
+    // Create notice to slash 40 tokens -> new_amount = 60
+    staking_client.create_slash_notice(&admin, &user, &40_0000000);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 20);
+
+    // Execute slash: recalculates voting_power with checked_mul
+    let result = staking_client.try_execute_slash(&admin, &user);
+    assert!(result.is_ok());
+
+    let stake = staking_client.get_stake(&user).unwrap();
+    assert_eq!(stake.amount, 60_0000000);
+    // voting_power = 60 * 5 = 300
+    assert_eq!(stake.voting_power, 300_0000000);
+
+    // Boundary / Overflow check:
+    // If a stake position has new_amount * multiplier that overflows i128
+    env.as_contract(&staking_client.address, || {
+        let mut pos = stake.clone();
+        pos.amount = i128::MAX;
+        pos.period = StakingPeriod::TwelveMonths; // multiplier = 4
+        env.storage()
+            .instance()
+            .set(&DataKey::Stake(user.clone()), &pos);
+    });
+
+    // Create a slash notice for 1 token: new_amount = i128::MAX - 1
+    // (i128::MAX - 1) * 4 overflows i128 -> must return StakingError::Overflow
+    staking_client.create_slash_notice(&admin, &user, &1i128);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 20);
+
+    let overflow_res = staking_client.try_execute_slash(&admin, &user);
+    assert_eq!(overflow_res, Err(Ok(StakingError::Overflow)));
+}
+
+#[test]
+fn test_query_stakers_page_pagination_and_bounds() {
+    let (env, admin, user, token) = setup_test_env();
+    let staking_client = deploy_staking_contract(&env, &admin, &token);
+
+    // Empty list: cursor = 0, limit = 10
+    let empty_page = staking_client.query_stakers_page(&0u32, &10u32);
+    assert_eq!(empty_page.total, 0);
+    assert_eq!(empty_page.entries.len(), 0);
+    assert_eq!(empty_page.next_cursor, 0);
+
+    // Stake with user
+    staking_client.stake(&user, &100_0000000, &1);
+
+    // Create another user
+    let user2 = Address::generate(&env);
+    let token_admin = StellarAssetClient::new(&env, &token);
+    token_admin.mint(&user2, &1_000_000_0000);
+    staking_client.stake(&user2, &200_0000000, &3);
+
+    // Query page 1 (limit 1) -> checks i increment / bounds
+    let page1 = staking_client.query_stakers_page(&0u32, &1u32);
+    assert_eq!(page1.total, 2);
+    assert_eq!(page1.entries.len(), 1);
+    assert_eq!(page1.entries.get(0).unwrap().address, user);
+    assert_eq!(page1.entries.get(0).unwrap().amount, 100_0000000);
+    assert_eq!(page1.next_cursor, 1);
+
+    // Query page 2 (from next_cursor 1, limit 1)
+    let page2 = staking_client.query_stakers_page(&page1.next_cursor, &1u32);
+    assert_eq!(page2.total, 2);
+    assert_eq!(page2.entries.len(), 1);
+    assert_eq!(page2.entries.get(0).unwrap().address, user2);
+    assert_eq!(page2.entries.get(0).unwrap().amount, 200_0000000);
+    assert_eq!(page2.next_cursor, 2);
+
+    // Out of bounds cursor: cursor >= total
+    let page_oob = staking_client.query_stakers_page(&100u32, &10u32);
+    assert_eq!(page_oob.total, 2);
+    assert_eq!(page_oob.entries.len(), 0);
+    assert_eq!(page_oob.next_cursor, 2);
+
+    // Boundary: cursor = u32::MAX
+    let page_max = staking_client.query_stakers_page(&u32::MAX, &10u32);
+    assert_eq!(page_max.total, 2);
+    assert_eq!(page_max.entries.len(), 0);
+    assert_eq!(page_max.next_cursor, 2);
+}
+
 // ── Tests for get_stake_amount ────────────────────────────────────────────────
 
 /// Happy path: staking sets the correct amount readable via get_stake_amount.
