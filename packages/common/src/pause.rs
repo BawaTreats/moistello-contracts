@@ -22,12 +22,14 @@ pub struct Unpaused {
     pub by: Address,
 }
 
+
 pub fn is_paused(env: &Env) -> bool {
     env.storage()
         .instance()
-        .get(&symbol_short!("paused"))
+        .get(symbol_short!("paused"))
         .unwrap_or(false)
 }
+
 
 pub fn pause(env: &Env, admin: &Address) -> Result<(), PauseError> {
     admin.require_auth();
@@ -36,10 +38,11 @@ pub fn pause(env: &Env, admin: &Address) -> Result<(), PauseError> {
     }
     env.storage()
         .instance()
-        .set(&symbol_short!("paused"), &true);
+        .set(symbol_short!("paused"), &true);
     Paused { by: admin.clone() }.publish(env);
     Ok(())
 }
+
 
 pub fn unpause(env: &Env, admin: &Address) -> Result<(), PauseError> {
     admin.require_auth();
@@ -48,10 +51,11 @@ pub fn unpause(env: &Env, admin: &Address) -> Result<(), PauseError> {
     }
     env.storage()
         .instance()
-        .set(&symbol_short!("paused"), &false);
+        .set(symbol_short!("paused"), &false);
     Unpaused { by: admin.clone() }.publish(env);
     Ok(())
 }
+
 
 pub fn when_not_paused(env: &Env) -> Result<(), PauseError> {
     if is_paused(env) {
@@ -60,6 +64,7 @@ pub fn when_not_paused(env: &Env) -> Result<(), PauseError> {
         Ok(())
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -81,21 +86,23 @@ mod tests {
     #[test]
     fn test_initially_not_paused() {
         let (env, contract_id, _admin) = setup();
-        env.as_contract(&contract_id, || {
+        env.as_contract(contract_id, || {
             assert!(!is_paused(&env));
-            assert!(when_not_paused(&env).is_ok());
+            assert_eq!(when_not_paused(&env), Ok(()));
         });
     }
+
 
     #[test]
     fn test_pause_sets_paused_flag() {
         let (env, contract_id, admin) = setup();
-        env.as_contract(&contract_id, || {
-            pause(&env, &admin).unwrap();
+        env.as_contract(contract_id, || {
+            assert_eq!(pause(&env, &admin), Ok(()));
             assert!(is_paused(&env));
             assert_eq!(when_not_paused(&env), Err(PauseError::ContractPaused));
         });
     }
+
 
     #[test]
     fn test_pause_is_idempotent() {
@@ -104,55 +111,58 @@ mod tests {
         // a single require_auth per frame ("frame is already authorized"
         // otherwise). Storage persists across frames.
         env.as_contract(&contract_id, || {
-            pause(&env, &admin).unwrap();
+            assert_eq!(pause(&env, &admin), Ok(()));
         });
         env.as_contract(&contract_id, || {
             // Second pause is a no-op, not an error.
-            pause(&env, &admin).unwrap();
+            assert_eq!(pause(&env, &admin), Ok(()));
             assert!(is_paused(&env));
         });
     }
+
 
     #[test]
     fn test_unpause_clears_paused_flag() {
         let (env, contract_id, admin) = setup();
         env.as_contract(&contract_id, || {
-            pause(&env, &admin).unwrap();
+            assert_eq!(pause(&env, &admin), Ok(()));
         });
         env.as_contract(&contract_id, || {
-            unpause(&env, &admin).unwrap();
+            assert_eq!(unpause(&env, &admin), Ok(()));
         });
         env.as_contract(&contract_id, || {
             assert!(!is_paused(&env));
-            assert!(when_not_paused(&env).is_ok());
+            assert_eq!(when_not_paused(&env), Ok(()));
         });
     }
+
 
     #[test]
     fn test_unpause_is_idempotent() {
         let (env, contract_id, admin) = setup();
         env.as_contract(&contract_id, || {
             // Unpausing a live contract is a no-op, not an error.
-            unpause(&env, &admin).unwrap();
+            assert_eq!(unpause(&env, &admin), Ok(()));
             assert!(!is_paused(&env));
         });
     }
+
 
     #[test]
     fn test_pause_unpause_full_cycle() {
         let (env, contract_id, admin) = setup();
         for _ in 0..3 {
             env.as_contract(&contract_id, || {
-                pause(&env, &admin).unwrap();
+                assert_eq!(pause(&env, &admin), Ok(()));
             });
             env.as_contract(&contract_id, || {
                 assert_eq!(when_not_paused(&env), Err(PauseError::ContractPaused));
             });
             env.as_contract(&contract_id, || {
-                unpause(&env, &admin).unwrap();
+                assert_eq!(unpause(&env, &admin), Ok(()));
             });
             env.as_contract(&contract_id, || {
-                assert!(when_not_paused(&env).is_ok());
+                assert_eq!(when_not_paused(&env), Ok(()));
             });
         }
     }
