@@ -140,6 +140,36 @@ fn test_record_rejects_activity_counter_overflow() {
 }
 
 #[test]
+fn test_activity_counter_boundaries() {
+    let env = Env::default();
+    let (client, _admin) = setup(&env);
+    let user = Address::generate(&env);
+
+    // Initial boundary: 0 activities
+    let history_0 = client.get_history(&user, &0, &10);
+    assert_eq!(history_0.len(), 0);
+
+    // Boundary: 0 -> 1 activity
+    let res_1 = client.try_record_activity(&user, &ACTIVITY_JOIN, &50);
+    assert!(res_1.is_ok());
+    let history_1 = client.get_history(&user, &0, &10);
+    assert_eq!(history_1.len(), 1);
+
+    // Boundary: u32::MAX - 1 -> u32::MAX
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::UserActivityCount(user.clone()), &(u32::MAX - 1));
+    });
+    let res_max = client.try_record_activity(&user, &ACTIVITY_CONTRIBUTE, &50);
+    assert!(res_max.is_ok());
+
+    // Boundary: u32::MAX -> overflow
+    let res_overflow = client.try_record_activity(&user, &ACTIVITY_COMPLETE, &50);
+    assert_eq!(res_overflow, Err(Ok(ReputationError::Overflow)));
+}
+
+#[test]
 fn test_activity_survives_default_ttl() {
     let env = Env::default();
     let (client, _admin) = setup(&env);
