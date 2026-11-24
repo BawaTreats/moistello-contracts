@@ -98,9 +98,11 @@ pub fn record_on_time_payment(
     let mut streak = storage::get_streak(env, member, circle_id);
     let last_round = storage::get_last_round(env, member, circle_id);
 
-    if last_round == 0 || round == last_round + 1 {
+    // `checked_add` so a `last_round` of u32::MAX cannot overflow; it simply
+    // breaks the streak, like any other non-consecutive round.
+    if last_round == 0 || last_round.checked_add(1) == Some(round) {
         storage::increment_streak(env, member, circle_id);
-        streak += 1;
+        streak = streak.saturating_add(1);
     } else {
         let key = crate::types::DataKey::Streak(member.clone(), circle_id.clone());
         env.storage().persistent().set(&key, &1u32);
@@ -110,7 +112,11 @@ pub fn record_on_time_payment(
     storage::set_last_round(env, member, circle_id, round);
 
     let base: u32 = 10;
-    let streak_bonus: u32 = if streak <= 10 { streak * 5 } else { 50 };
+    let streak_bonus: u32 = if streak <= 10 {
+        streak.saturating_mul(5)
+    } else {
+        50
+    };
     let volume_bonus_raw = (amount / 100_0000000) as u32; // 1 point per 100 USDC
     let volume_bonus: u32 = if volume_bonus_raw > 20 {
         20
@@ -150,11 +156,7 @@ pub fn record_circle_completion(env: &Env, member: &Address) -> u32 {
 pub fn record_default(env: &Env, member: &Address) -> u32 {
     let current = storage::get_score(env, member);
     let penalty: u32 = 200;
-    let new_score = if current > penalty {
-        current - penalty
-    } else {
-        0
-    };
+    let new_score = current.saturating_sub(penalty);
 
     storage::increment_defaults(env, member);
     storage::set_score(env, member, new_score);
@@ -167,8 +169,10 @@ pub fn record_default(env: &Env, member: &Address) -> u32 {
 pub fn apply_inactivity_decay(env: &Env, member: &Address, days_inactive: u64) -> u32 {
     let current = storage::get_score(env, member);
     let months = days_inactive / 30;
-    let decay: u32 = ((months as u64).saturating_mul(5)) as u32;
-    let new_score = if current > decay { current - decay } else { 0 };
+    // Saturate rather than `as u32`, which would silently truncate a huge
+    // `days_inactive` into a small (or zero) decay.
+    let decay = u32::try_from(months.saturating_mul(5)).unwrap_or(u32::MAX);
+    let new_score = current.saturating_sub(decay);
 
     storage::set_score(env, member, new_score);
     new_score

@@ -1180,6 +1180,76 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_random_arithmetic_boundary_and_overflow() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 0u32; // PAYOUT_RANDOM
+        let (_token, client) = setup_test_env(&env, &mut config);
+        let circle = client.get_status();
+
+        env.as_contract(&client.address, || {
+            // Boundary: round = u32::MAX overflows round * 1000 -> must return Err(CircleError::InvalidAmount)
+            let res_max = crate::payout::resolve_random(&env, &circle, u32::MAX);
+            assert_eq!(res_max, Err(CircleError::InvalidAmount));
+
+            // Boundary: (u32::MAX / 1000) + 1 overflows round * 1000 -> must return Err(CircleError::InvalidAmount)
+            let overflow_round = (u32::MAX / 1000) + 1;
+            let res_overflow = crate::payout::resolve_random(&env, &circle, overflow_round);
+            assert_eq!(res_overflow, Err(CircleError::InvalidAmount));
+
+            // Boundary: round = 0 and round = 1 are within range (no arithmetic overflow)
+            let res_zero = crate::payout::resolve_random(&env, &circle, 0);
+            assert_ne!(res_zero, Err(CircleError::InvalidAmount));
+
+            let res_one = crate::payout::resolve_random(&env, &circle, 1);
+            assert_ne!(res_one, Err(CircleError::InvalidAmount));
+        });
+    }
+
+    #[test]
+    fn test_resolve_vote_quorum_and_arithmetic_guards() {
+        let env = Env::default();
+        let mut config = create_config(&env);
+        config.max_members = 2u32;
+        config.payout_type = 3u32; // PAYOUT_VOTE
+        let (_token, client) = setup_test_env(&env, &mut config);
+
+        let voter = Address::generate(&env);
+        let nominee = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.try_join(&voter).unwrap().unwrap();
+        client.try_join(&nominee).unwrap().unwrap();
+
+        let circle = client.get_status();
+
+        // 0 votes cast: match_count (0) < quorum (2 / 2 + 1 = 2) -> VoteQuorumNotMet
+        let res_no_votes =
+            env.as_contract(&client.address, || crate::payout::resolve_vote(&env, &circle, 0));
+        assert_eq!(res_no_votes, Err(CircleError::VoteQuorumNotMet));
+
+        // 1 vote cast: match_count (1) < quorum (2) -> VoteQuorumNotMet
+        client
+            .try_vote_payout(&voter, &nominee, &0u32)
+            .unwrap()
+            .unwrap();
+        let res_one_vote =
+            env.as_contract(&client.address, || crate::payout::resolve_vote(&env, &circle, 0));
+        assert_eq!(res_one_vote, Err(CircleError::VoteQuorumNotMet));
+
+        // 2nd vote cast: match_count (2) == quorum (2) -> quorum met, nominee wins
+        client
+            .try_vote_payout(&nominee, &nominee, &0u32)
+            .unwrap()
+            .unwrap();
+        let winner = env
+            .as_contract(&client.address, || crate::payout::resolve_vote(&env, &circle, 0))
+            .unwrap();
+        assert_eq!(winner, nominee);
+    }
+
+    #[test]
     fn test_trigger_payout_fixed_happy_path() {
         let env = Env::default();
         let mut config = create_config(&env);

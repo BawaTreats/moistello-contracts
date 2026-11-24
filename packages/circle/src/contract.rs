@@ -2188,7 +2188,7 @@ pub fn get_contributions(
                 if count >= start && count < end {
                     out.push_back(c);
                 }
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
     }
@@ -2438,12 +2438,11 @@ pub fn batch_payout(
         }
 
         // Calculate fee (#256)
-        let fee = if fee_bps > 0 {
-            (amount * (fee_bps as i128)) / 10000
+        let (net_amount, fee) = if fee_bps > 0 {
+            math::apply_fee(amount, fee_bps as i128).map_err(|_| CircleError::InvalidAmount)?
         } else {
-            0
+            (amount, 0)
         };
-        let net_amount = amount - fee;
 
         // Transfer net amount to recipient
         token_client.transfer(&circle.id, &recipient, &net_amount);
@@ -2584,13 +2583,13 @@ pub fn update_streak_internal(env: &Env, member: &Address, round: u32) -> Result
                     s.longest_streak = 1;
                 }
                 s.last_round = round;
-            } else if round == s.last_round + 1 {
-                s.current_streak += 1;
+            } else if s.last_round.checked_add(1) == Some(round) {
+                s.current_streak = s.current_streak.saturating_add(1);
                 if s.current_streak > s.longest_streak {
                     s.longest_streak = s.current_streak;
                 }
                 s.last_round = round;
-            } else if round > s.last_round + 1 {
+            } else if round > s.last_round.saturating_add(1) {
                 s.current_streak = 1;
                 s.last_round = round;
             }
@@ -2673,6 +2672,8 @@ pub fn get_member_streak(env: &Env, member: &Address) -> Streak {
     }
 }
 // Closes #201: set_reputation_registry correctly writes to DataKey::ReputationRegistry
+/// Sets the reputation registry that circles report to. Admin only; rejected
+/// while the contract is paused. Requires the admin's authorization.
 pub fn set_reputation_registry(
     env: &Env,
     admin: &Address,
@@ -2693,9 +2694,60 @@ pub fn set_reputation_registry(
         .set(&DataKey::ReputationRegistry, registry);
     Ok(())
 }
+/// Returns the reputation registry this circle reports to, if configured.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+///
+/// # Returns
+/// - `Some(Address)` with the configured reputation registry
+/// - `None` if no registry has been configured
+///
+/// # Authorization
+/// None. Read-only and callable by anyone.
+///
+/// # Storage
+/// Reads `DataKey::ReputationRegistry` from instance storage.
+///
+/// # Events
+/// None.
+///
+/// # Errors
+/// None. Does not return a `CircleError` and does not check the paused state.
 pub fn get_reputation_registry(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::ReputationRegistry)
 }
+/// Sets the treasury address this circle routes fees to.
+///
+/// Only callable by the admin stored at initialization.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Admin address, must match the stored admin
+/// - `treasury`: New treasury contract address (not validated)
+///
+/// # Returns
+/// - `Ok(())` on successful update
+/// - `Err(CircleError::ContractPaused)` if the circle is paused
+/// - `Err(CircleError::NotInitialized)` if no admin is stored
+/// - `Err(CircleError::Unauthorized)` if `admin` is not the stored admin
+///
+/// # Authorization
+/// Requires authentication from `admin`. The admin match is checked before
+/// `require_auth`, so a mismatched caller gets `Unauthorized`.
+///
+/// # Storage
+/// Reads `DataKey::Admin` and writes `DataKey::Treasury` in instance storage.
+///
+/// # Events
+/// None. No event is published.
+///
+/// # Notes
+/// Only the treasury is updated. Fee and reputation registry are unchanged.
+///
+/// # Panics
+/// A failed `require_auth` aborts the invocation instead of returning a
+/// `CircleError`.
 pub fn set_treasury(env: &Env, admin: &Address, treasury: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let s: Address = env
@@ -2826,6 +2878,21 @@ pub fn set_token(env: &Env, admin: &Address, token: &Address) -> Result<(), Circ
     env.storage().instance().set(&DataKey::Circle, &circle);
     Ok(())
 }
+/// Sets the protocol fee in basis points.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `admin`: Must match the stored admin address and authorise the call
+/// - `fee_bps`: Fee in basis points, from 0 to 10_000 inclusive
+///
+/// # Returns
+/// `Ok(())` after storing the value in instance storage under `DataKey::FeeBps`.
+///
+/// # Errors
+/// - `ContractPaused` if the contract is paused
+/// - `NotInitialized` if no admin is stored
+/// - `Unauthorized` if `admin` is not the stored admin
+/// - `InvalidAmount` if `fee_bps` is greater than 10_000
 pub fn set_fee_bps(env: &Env, admin: &Address, fee_bps: u32) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let s: Address = env
@@ -2903,6 +2970,8 @@ pub fn get_allowlist(env: &Env) -> Vec<Address> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+/// Sets the primary price oracle. Admin only; rejected while the contract is
+/// paused. The fallback oracle is set separately with `set_fallback_oracle`.
 pub fn set_oracle(env: &Env, admin: &Address, oracle: &Address) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let s: Address = env
@@ -2937,6 +3006,7 @@ pub fn set_fallback_oracle(
     Ok(())
 }
 
+/// Returns the primary oracle address, or `None` if none has been set.
 pub fn get_oracle(env: &Env) -> Option<Address> {
     oracle::get_primary_oracle(env)
 }
@@ -2984,9 +3054,9 @@ pub fn calculate_health_score(
     let mut total_contributions: u32 = 0;
     for i in 0..contributions.len() {
         if let Some(c) = contributions.get(i) {
-            total_contributions += 1;
+            total_contributions = total_contributions.saturating_add(1);
             if c.on_time {
-                on_time_count += 1;
+                on_time_count = on_time_count.saturating_add(1);
             }
         }
     }
@@ -3001,11 +3071,11 @@ pub fn calculate_health_score(
     let mut exited_count: u32 = 0;
     for i in 0..members.len() {
         if let Some(m) = members.get(i) {
-            member_count += 1;
+            member_count = member_count.saturating_add(1);
             if m.status == MEMBER_DEFAULTED {
-                defaulted_count += 1;
+                defaulted_count = defaulted_count.saturating_add(1);
             } else if m.status == MEMBER_EXITED {
-                exited_count += 1;
+                exited_count = exited_count.saturating_add(1);
             }
         }
     }
@@ -3013,14 +3083,15 @@ pub fn calculate_health_score(
         (BPS_SCALE, BPS_SCALE)
     } else {
         (
-            (member_count - defaulted_count).saturating_mul(BPS_SCALE) / member_count,
-            (member_count - exited_count).saturating_mul(BPS_SCALE) / member_count,
+            member_count.saturating_sub(defaulted_count).saturating_mul(BPS_SCALE) / member_count,
+            member_count.saturating_sub(exited_count).saturating_mul(BPS_SCALE) / member_count,
         )
     };
 
-    let weighted = on_time_rate_bps as u64 * 40
-        + completion_rate_bps as u64 * 35
-        + member_retention_bps as u64 * 25;
+    let weighted = u64::from(on_time_rate_bps)
+        .saturating_mul(40)
+        .saturating_add(u64::from(completion_rate_bps).saturating_mul(35))
+        .saturating_add(u64::from(member_retention_bps).saturating_mul(25));
     let score = (weighted / (BPS_SCALE as u64 * 100)) as u32;
 
     HealthScoreResult {
@@ -3031,6 +3102,21 @@ pub fn calculate_health_score(
     }
 }
 
+/// Computes the SHA-256 hash of a circle's configuration.
+///
+/// The hash covers the fixed config fields (organizer, token, name, amounts,
+/// limits, deadlines and slug). Mutable state such as `current_round`, `status`
+/// and totals is not included.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `circle`: Circle whose configuration is hashed
+///
+/// # Returns
+/// 32-byte SHA-256 digest of the XDR-encoded `CircleConfig`.
+///
+/// # Panics
+/// Does not panic. Used to write `RoundConfigSnapshot` at setup and on each round advance.
 pub fn compute_circle_config_hash(env: &Env, circle: &Circle) -> BytesN<32> {
     let config = CircleConfig {
         organizer: circle.organizer.clone(),
@@ -3055,6 +3141,8 @@ pub fn compute_circle_config_hash(env: &Env, circle: &Circle) -> BytesN<32> {
     env.crypto().sha256(&xdr_bytes).into()
 }
 
+/// Returns the SHA-256 hash of the configuration snapshot recorded for `round`.
+/// Fails with `InvalidRound` if no snapshot exists for that round.
 pub fn query_round_config(env: &Env, round: u32) -> Result<BytesN<32>, CircleError> {
     env.storage()
         .persistent()
@@ -3062,6 +3150,18 @@ pub fn query_round_config(env: &Env, round: u32) -> Result<BytesN<32>, CircleErr
         .ok_or(CircleError::InvalidRound)
 }
 
+/// Returns the fee ledger recorded for a round.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `round`: Round number to look up
+///
+/// # Returns
+/// The stored `RoundFeeLedger` for `round`. If none is stored, a zeroed ledger
+/// for that round is returned (`payout_fee`, `late_penalty_fee` and `total_fee` are 0).
+///
+/// # Panics
+/// Does not panic. Performs no authorisation and does not check that the round exists.
 pub fn get_round_fee_ledger(env: &Env, round: u32) -> RoundFeeLedger {
     env.storage()
         .persistent()
@@ -3069,6 +3169,24 @@ pub fn get_round_fee_ledger(env: &Env, round: u32) -> RoundFeeLedger {
         .unwrap_or_else(|| empty_round_fee_ledger(round))
 }
 
+/// Marks a payout as scheduled for the current round.
+///
+/// Sets `PayoutScheduled(round)` to `true`. It does not transfer funds.
+///
+/// # Parameters
+/// - `env`: Contract execution environment
+/// - `caller`: Must be the circle organizer or the stored admin, and must authorise the call
+/// - `round`: Round to schedule. Must equal the circle's `current_round`
+///
+/// # Returns
+/// `Ok(())` after the flag is written. Calling it again for the same round rewrites the flag.
+///
+/// # Errors
+/// - `ContractPaused` if the contract is paused
+/// - `NotActive` if a reentrancy guard is already held or the circle status is not active
+/// - `NotInitialized` if the circle or admin is not stored
+/// - `Unauthorized` if `caller` is neither the organizer nor the admin
+/// - `RoundNotCurrent` if `round` is not the current round
 pub fn schedule_payout(env: &Env, caller: &Address, round: u32) -> Result<(), CircleError> {
     pause::when_not_paused(env).map_err(|_| CircleError::ContractPaused)?;
     let _guard = ReentrancyGuard::new(env).map_err(|_| CircleError::NotActive)?;

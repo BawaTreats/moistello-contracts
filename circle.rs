@@ -444,3 +444,23 @@ mod tests {
         assert_eq!(result, Err(Ok(CircleError::NoCollateralToRefund)));
     }
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CircleConfig {
+    pub admin: Address,
+    pub token: Address,
+    pub base_amount: i128,
+    pub collateral_amount: i128,
+}
+fn require_admin(env: &Env) -> Result<(), CircleError> {
+    let config: CircleConfig = env
+        .storage()
+        .instance()
+        .get(&DataKey::Config)
+        .ok_or(CircleError::CircleConfigNotFound)?;
+
+    config.admin.require_auth();
+
+    Ok(())
+}

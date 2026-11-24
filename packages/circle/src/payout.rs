@@ -13,7 +13,8 @@ fn ensure_active_unpaid_member(circle: &Circle, member: &Member) -> Result<(), C
 }
 
 pub fn resolve_random(env: &Env, circle: &Circle, round: u32) -> Result<Address, CircleError> {
-    let positions = vrf::shuffle_positions(env, circle.max_members, round * 1000)
+    let nonce = round.checked_mul(1000).ok_or(CircleError::InvalidAmount)?;
+    let positions = vrf::shuffle_positions(env, circle.max_members, nonce)
         .map_err(|_| CircleError::InvalidAmount)?;
     let members: Vec<Member> = env
         .storage()
@@ -121,7 +122,11 @@ pub fn resolve_vote(env: &Env, circle: &Circle, round: u32) -> Result<Address, C
         .get(&DataKey::Members)
         .ok_or(CircleError::NotInitialized)?;
     let active = count_active(env)?;
-    let quorum = (active / 2) + 1;
+    let quorum = active
+        .checked_div(2)
+        .ok_or(CircleError::InvalidAmount)?
+        .checked_add(1)
+        .ok_or(CircleError::InvalidAmount)?;
     let mut tally: Map<Address, u32> = Map::new(env);
     let mut match_count: u32 = 0;
     for i in 0..votes.len() {

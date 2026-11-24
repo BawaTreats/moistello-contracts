@@ -1,3 +1,4 @@
+
 [workspace]
 resolver = "2"
 members = [
@@ -12,19 +13,45 @@ members = [
     "packages/governance-token",
 ]
 
+# Shared package metadata inherited by workspace members.
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.91"
 license = "Apache-2.0"
 
+# Centralized dependency versions.
 [workspace.dependencies]
 soroban-sdk = "26.0.0"
 soroban-token-sdk = "26.0.0"
 
+# Shared Rust lint configuration.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(testutils)'] }
+
+# Shared Clippy configuration.
+[workspace.lints.clippy]
+all = "warn"
+correctness = "deny"
+suspicious = "warn"
+
+# Optimized production builds, especially for Soroban WASM contracts.
 [profile.release]
 opt-level = "z"
 lto = true
 strip = true
 panic = "abort"
 codegen-units = 1
+overflow-checks = true
+debug = false
+incremental = false
+
+# Faster execution during tests without fully optimizing test builds.
+[profile.test]
+opt-level = 1
+
+# Optimize dependencies used by tests.
+[profile.test.package."*"]
+opt-level = 2

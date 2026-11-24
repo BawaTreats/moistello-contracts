@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contractevent, contracttype, Address};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, Vec};
 
 /// Staking period options with corresponding voting power multipliers
 #[contracttype]
@@ -10,6 +10,15 @@ pub enum StakingPeriod {
     SixMonths = 6,     // 6 months = 3x multiplier
     TwelveMonths = 12, // 12 months = 5x multiplier
 }
+
+/// 30 days.
+pub const ONE_MONTH_SECONDS: u64 = 2_592_000;
+/// 90 days.
+pub const THREE_MONTHS_SECONDS: u64 = 7_776_000;
+/// 180 days.
+pub const SIX_MONTHS_SECONDS: u64 = 15_552_000;
+/// 360 days.
+pub const TWELVE_MONTHS_SECONDS: u64 = 31_104_000;
 
 impl StakingPeriod {
     /// Returns the voting power multiplier for this staking period
@@ -24,12 +33,13 @@ impl StakingPeriod {
 
     /// Returns the staking period in seconds
     pub fn as_seconds(&self) -> u64 {
-        // 30 days per month approximation
+        // 30 days per month approximation. Fixed literals (see the constants
+        // below) rather than runtime arithmetic, so there is nothing to overflow.
         match self {
-            StakingPeriod::OneMonth => 30 * 24 * 60 * 60,
-            StakingPeriod::ThreeMonths => 90 * 24 * 60 * 60,
-            StakingPeriod::SixMonths => 180 * 24 * 60 * 60,
-            StakingPeriod::TwelveMonths => 360 * 24 * 60 * 60,
+            StakingPeriod::OneMonth => ONE_MONTH_SECONDS,
+            StakingPeriod::ThreeMonths => THREE_MONTHS_SECONDS,
+            StakingPeriod::SixMonths => SIX_MONTHS_SECONDS,
+            StakingPeriod::TwelveMonths => TWELVE_MONTHS_SECONDS,
         }
     }
 
@@ -50,7 +60,7 @@ impl StakingPeriod {
 }
 
 /// Unbonding period in seconds (14 days)
-pub const UNBONDING_PERIOD_SECONDS: u64 = 14 * 24 * 60 * 60;
+pub const UNBONDING_PERIOD_SECONDS: u64 = 1_209_600;
 
 /// Minimum stake accepted by the contract, expressed in stroop-like token units.
 /// Rejecting smaller "dust" positions keeps voting snapshots and staker pages
@@ -225,4 +235,26 @@ pub struct Slashed {
     pub user: Address,
     pub amount: i128,
     pub shortfall: i128,
+}
+
+// ── #445 — Paginated staker query ────────────────────────────────────────────
+
+/// Maximum number of entries returned by a single `query_stakers_page` call.
+pub const MAX_STAKERS_PAGE_SIZE: u32 = 50;
+
+/// One entry in a `StakersPage`: the staker's address and their current staked amount.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakerEntry {
+    pub address: Address,
+    pub amount: i128,
+}
+
+/// Result of `query_stakers_page`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakersPage {
+    pub entries: Vec<StakerEntry>,
+    pub next_cursor: u32,
+    pub total: u32,
 }

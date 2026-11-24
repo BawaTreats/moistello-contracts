@@ -1,4 +1,6 @@
 #![cfg_attr(not(test), no_std)]
+#[cfg(test)]
+mod arithmetic_tests;
 mod contract;
 #[cfg(test)]
 mod test;

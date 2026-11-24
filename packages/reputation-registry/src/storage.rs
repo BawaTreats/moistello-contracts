@@ -29,7 +29,9 @@ pub fn get_streak(env: &Env, member: &Address, circle_id: &Address) -> u32 {
 pub fn increment_streak(env: &Env, member: &Address, circle_id: &Address) {
     let current = get_streak(env, member, circle_id);
     let key = DataKey::Streak(member.clone(), circle_id.clone());
-    env.storage().persistent().set(&key, &(current + 1));
+    env.storage()
+        .persistent()
+        .set(&key, &current.saturating_add(1));
     ttl::extend_persistent(env, &key);
 }
 
@@ -45,7 +47,9 @@ pub fn get_completions(env: &Env, member: &Address) -> u32 {
 pub fn increment_completions(env: &Env, member: &Address) {
     let current = get_completions(env, member);
     let key = DataKey::Completions(member.clone());
-    env.storage().persistent().set(&key, &(current + 1));
+    env.storage()
+        .persistent()
+        .set(&key, &current.saturating_add(1));
     ttl::extend_persistent(env, &key);
 }
 
@@ -61,7 +65,9 @@ pub fn get_defaults(env: &Env, member: &Address) -> u32 {
 pub fn increment_defaults(env: &Env, member: &Address) {
     let current = get_defaults(env, member);
     let key = DataKey::Defaults(member.clone());
-    env.storage().persistent().set(&key, &(current + 1));
+    env.storage()
+        .persistent()
+        .set(&key, &current.saturating_add(1));
     ttl::extend_persistent(env, &key);
 }
 

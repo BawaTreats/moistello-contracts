@@ -1,0 +1,81 @@
+# Known Security Advisories
+
+## RUSTSEC-2026-0581 - Heapless Deque::make_contiguous Broken Invariants
+
+**Package**: heapless (transitive dependency)
+
+**Severity**: Unsound
+
+**Description**: `Deque::make_contiguous` could set the `back` value to either `0` or `N` when it shouldn't, leading to broken invariants and out-of-bounds writes.
+
+**Status**: Transitive dependency of soroban-sdk@26.0.0. Waiting for soroban-sdk to upgrade heapless.
+
+**Mitigation**: Risk accepted with explicit advisory ignore in deny.toml.
+
+**Reference**: https://rustsec.org/advisories/RUSTSEC-2026-0581
+
+---
+
+## RUSTSEC-2026-0574 - Heapless FindMutView::pop Use After Free
+
+**Package**: heapless (transitive dependency)
+
+**Severity**: Unsound
+
+**Description**: `FindMutView::pop` after mutating the value could lead to a use after free.
+
+**Status**: Transitive dependency of soroban-sdk@26.0.0. Waiting for soroban-sdk to upgrade heapless.
+
+**Mitigation**: Risk accepted with explicit advisory ignore in deny.toml.
+
+**Reference**: https://rustsec.org/advisories/RUSTSEC-2026-0574
+
+---
+
+## RUSTSEC-2026-0579 - Heapless Deque TryFrom Invalid State
+
+**Package**: heapless (transitive dependency)
+
+**Severity**: Unsound
+
+**Description**: `Deque::try_from` could produce an invalid state when the input array was as long as the capacity of the Deque.
+
+**Status**: Transitive dependency of soroban-sdk@26.0.0. Waiting for soroban-sdk to upgrade heapless.
+
+**Mitigation**: Risk accepted with explicit advisory ignore in deny.toml.
+
+**Reference**: https://rustsec.org/advisories/RUSTSEC-2026-0579
+
+---
+
+## RUSTSEC-2024-0436 - Paste Crate No Longer Maintained
+
+**Package**: paste (transitive dependency)
+
+**Severity**: Unmaintained
+
+**Description**: The paste crate is no longer maintained. The repository has been archived by its creator.
+
+**Status**: Transitive dependency of soroban-sdk@26.0.0. Potential alternatives include `pastey` or `with_builtin_macros`.
+
+**Mitigation**: Risk accepted with explicit advisory ignore in deny.toml. Monitor for soroban-sdk updates that may replace this dependency.
+
+**Reference**: https://rustsec.org/advisories/RUSTSEC-2024-0436
+
+---
+
+## RUSTSEC-2026-0580 - Heapless Treiber Stack Race Condition
+
+**Package**: heapless (transitive dependency)
+
+**Severity**: Unsound
+
+**Description**: The treiber stack implementation in heapless had a race condition that could allow two threads running concurrently to race, causing one to read from a pointer that had been invalidated by another execution context.
+
+**Status**: This is a transitive dependency of soroban-sdk@26.0.0. Monitor for updates to soroban-sdk that upgrade or replace heapless.
+
+**Mitigation**: 
+- Upgrade soroban-sdk when a patched version becomes available
+- Consider alternative concurrency patterns if heapless is a critical blocker
+
+**Reference**: https://rustsec.org/advisories/RUSTSEC-2026-0580

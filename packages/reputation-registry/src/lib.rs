@@ -3,6 +3,8 @@ mod contract;
 pub mod scoring;
 pub mod storage;
 #[cfg(test)]
+mod arithmetic_tests;
+#[cfg(test)]
 mod test;
 mod types;
 use soroban_sdk::{contract, contractimpl, Address, Env};

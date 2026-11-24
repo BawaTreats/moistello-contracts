@@ -5,17 +5,21 @@
 //! `MessageInfo` parameters; those belong to CosmWasm and must never appear
 //! here.  All mutation functions perform access-control checks first, before
 //! touching storage.
+
 use soroban_sdk::{symbol_short, token, Address, Env, Vec};
 
 use crate::types::*;
 use common::pause;
 
-fn require_admin(env: &Env, admin: &Address) -> Result<(), TreasuryError> {
-    let stored: Address = env
-        .storage()
+fn load_admin(env: &Env) -> Result<Address, TreasuryError> {
+    env.storage()
         .instance()
         .get(&DataKey::Admin)
-        .ok_or(TreasuryError::NotInitialized)?;
+        .ok_or(TreasuryError::NotInitialized)
+}
+
+fn require_admin(env: &Env, admin: &Address) -> Result<(), TreasuryError> {
+    let stored = load_admin(env)?;
     if admin != &stored {
         return Err(TreasuryError::Unauthorized);
     }
@@ -24,20 +28,42 @@ fn require_admin(env: &Env, admin: &Address) -> Result<(), TreasuryError> {
 }
 
 fn token_client<'a>(env: &'a Env) -> Result<token::Client<'a>, TreasuryError> {
-    let token: Address = env
+    let token_addr: Address = env
         .storage()
         .instance()
         .get(&DataKey::Token)
         .ok_or(TreasuryError::NotInitialized)?;
-    Ok(token::Client::new(env, &token))
+    Ok(token::Client::new(env, &token_addr))
+}
+
+fn read_balance(env: &Env) -> i128 {
+    env.storage().instance().get(&DataKey::Balance).unwrap_or(0)
+}
+
+fn debit_balance(
+    env: &Env,
+    amount: i128,
+    underflow_err: TreasuryError,
+) -> Result<i128, TreasuryError> {
+    let current = read_balance(env);
+    if current < amount {
+        return Err(underflow_err);
+    }
+    let updated = current.checked_sub(amount).ok_or(underflow_err)?;
+    env.storage().instance().set(&DataKey::Balance, &updated);
+    Ok(updated)
 }
 
 /// Initializes the treasury contract with an admin and token address.
 pub fn init(env: &Env, admin: &Address, token: &Address) -> Result<(), TreasuryError> {
     admin.require_auth();
+ fix/governance-quorum-init-guards
     if env.storage().instance().has(&DataKey::Admin) {
         return Err(TreasuryError::AlreadyInitialized);
     }
+
+
+ master
     env.storage().instance().set(&DataKey::Admin, admin);
     env.storage().instance().set(&DataKey::Token, token);
     env.storage().instance().set(&DataKey::Balance, &0i128);
@@ -61,19 +87,22 @@ pub fn deposit(
     if from != circle_id {
         return Err(TreasuryError::Unauthorized);
     }
+    from.require_auth();
+
     if amount <= 0 {
         return Err(TreasuryError::InvalidAmount);
     }
 
-    let treasury = env.current_contract_address();
-    token_client(env)?.transfer(from, &treasury, &amount);
+    let client = token_client(env)?;
+    let current_bal = read_balance(env);
+    let next_bal = current_bal
+        .checked_add(amount)
+        .ok_or(TreasuryError::InvalidAmount)?;
 
-    let bal: i128 = env.storage().instance().get(&DataKey::Balance).unwrap_or(0);
-    env.storage().instance().set(
-        &DataKey::Balance,
-        &bal.checked_add(amount)
-            .ok_or(TreasuryError::InvalidAmount)?,
-    );
+    let treasury = env.current_contract_address();
+    client.transfer(from, &treasury, &amount);
+
+    env.storage().instance().set(&DataKey::Balance, &next_bal);
 
     let mut deps: Vec<Deposit> = env
         .storage()
@@ -87,6 +116,7 @@ pub fn deposit(
         timestamp: env.ledger().timestamp(),
     });
     env.storage().persistent().set(&DataKey::Deposits, &deps);
+
     env.events().publish(
         (treasury, symbol_short!("deposit")),
         FeeDeposited {
@@ -106,26 +136,23 @@ pub fn withdraw(
     amount: i128,
 ) -> Result<(), TreasuryError> {
     pause::when_not_paused(env).map_err(|_| TreasuryError::ContractPaused)?;
+    require_admin(env, admin)?;
     let _guard =
         common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
-    require_admin(env, admin)?;
+
     if amount <= 0 {
         return Err(TreasuryError::InvalidAmount);
     }
 
-    let bal: i128 = env.storage().instance().get(&DataKey::Balance).unwrap_or(0);
-    if bal < amount {
+    let client = token_client(env)?;
+    let current_bal = read_balance(env);
+    if current_bal < amount {
         return Err(TreasuryError::InsufficientBalance);
     }
 
     let treasury = env.current_contract_address();
-    token_client(env)?.transfer(&treasury, to, &amount);
-
-    env.storage().instance().set(
-        &DataKey::Balance,
-        &bal.checked_sub(amount)
-            .ok_or(TreasuryError::InsufficientBalance)?,
-    );
+    client.transfer(&treasury, to, &amount);
+    debit_balance(env, amount, TreasuryError::InsufficientBalance)?;
 
     let mut wds: Vec<Withdrawal> = env
         .storage()
@@ -139,6 +166,7 @@ pub fn withdraw(
         timestamp: env.ledger().timestamp(),
     });
     env.storage().persistent().set(&DataKey::Withdrawals, &wds);
+
     env.events().publish(
         (treasury, symbol_short!("withdraw")),
         FundsWithdrawn {
@@ -151,7 +179,7 @@ pub fn withdraw(
 
 /// Returns the current balance of the treasury.
 pub fn get_balance(env: &Env) -> i128 {
-    env.storage().instance().get(&DataKey::Balance).unwrap_or(0)
+    read_balance(env)
 }
 
 /// Returns all deposit records.
@@ -173,6 +201,7 @@ pub fn rescue_tokens(
     require_admin(env, admin)?;
     let _guard =
         common::reentrancy::ReentrancyGuard::new(env).map_err(|_| TreasuryError::Unauthorized)?;
+
     if !pause::is_paused(env) {
         return Err(TreasuryError::ContractNotPaused);
     }
@@ -185,22 +214,21 @@ pub fn rescue_tokens(
         .instance()
         .get(&DataKey::Token)
         .ok_or(TreasuryError::NotInitialized)?;
-    if treasury_token == *token {
-        let bal: i128 = env.storage().instance().get(&DataKey::Balance).unwrap_or(0);
-        if bal < amount {
-            return Err(TreasuryError::InsufficientBalance);
-        }
-        env.storage().instance().set(
-            &DataKey::Balance,
-            &bal.checked_sub(amount)
-                .ok_or(TreasuryError::InsufficientBalance)?,
-        );
+    let is_treasury_token = treasury_token == *token;
+    if is_treasury_token && read_balance(env) < amount {
+        return Err(TreasuryError::InsufficientBalance);
     }
 
-    let token_client = token::Client::new(env, token);
-    token_client.transfer(&env.current_contract_address(), to, &amount);
+    let treasury = env.current_contract_address();
+    let rescue_client = token::Client::new(env, token);
+    rescue_client.transfer(&treasury, to, &amount);
+
+    if is_treasury_token {
+        debit_balance(env, amount, TreasuryError::InsufficientBalance)?;
+    }
+
     env.events().publish(
-        (env.current_contract_address(), symbol_short!("rescue")),
+        (treasury, symbol_short!("rescue")),
         TokensRescued {
             to: to.clone(),
             token: token.clone(),
@@ -212,22 +240,16 @@ pub fn rescue_tokens(
 
 /// Pauses the treasury, preventing deposits and withdrawals.
 pub fn pause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
-    let s: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(TreasuryError::NotInitialized)?;
-    common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
+    let stored_admin = load_admin(env)?;
+    common::access::require_self_or_admin(env, a, &stored_admin)
+        .map_err(|_| TreasuryError::Unauthorized)?;
     pause::pause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }
 
 /// Unpauses the treasury, allowing deposits and withdrawals to resume.
 pub fn unpause(env: &Env, a: &Address) -> Result<(), TreasuryError> {
-    let s: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(TreasuryError::NotInitialized)?;
-    common::access::require_self_or_admin(env, a, &s).map_err(|_| TreasuryError::Unauthorized)?;
+    let stored_admin = load_admin(env)?;
+    common::access::require_self_or_admin(env, a, &stored_admin)
+        .map_err(|_| TreasuryError::Unauthorized)?;
     pause::unpause(env, a).map_err(|_| TreasuryError::ContractPaused)
 }

@@ -422,18 +422,18 @@ fn compute_vrf_hash(
 ) -> Result<u32, VrfError> {
     let hash_bytes = hash_to_bytes(env, input_seed, salt, counter);
     let hash = env.crypto().sha256(&hash_bytes);
-    let array = hash.to_array();
-    let mut result = 0u32;
-    for i in 0..8 {
-        let chunk = [
-            array[i * 4],
-            array[i * 4 + 1],
-            array[i * 4 + 2],
-            array[i * 4 + 3],
-        ];
-        result ^= u32::from_le_bytes(chunk);
-    }
-    Ok(result)
+    Ok(fold_hash_words(&hash.to_array()))
+}
+
+/// XOR-fold a 32-byte digest into a `u32` by splitting it into eight
+/// little-endian 4-byte words.
+///
+/// Uses `chunks_exact(4)` rather than computing `i * 4 + n` offsets by hand, so
+/// there is no index arithmetic that could overflow or read out of bounds.
+fn fold_hash_words(digest: &[u8; 32]) -> u32 {
+    digest
+        .chunks_exact(4)
+        .fold(0u32, |acc, c| acc ^ u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
 }
 
 /// Build the pre-hash byte sequence: input_seed(4) ++ salt(32) ++ counter(4)
@@ -444,3 +444,77 @@ fn hash_to_bytes(env: &Env, input_seed: u32, salt: &BytesN<32>, counter: u32) ->
     data.extend_from_slice(&counter.to_le_bytes());
     data
 }
+
+#[cfg(test)]
+mod fold_hash_words_tests {
+    use super::fold_hash_words;
+
+    /// The previous implementation, kept as the reference for equivalence.
+    fn reference(array: &[u8; 32]) -> u32 {
+        let mut result = 0u32;
+        for i in 0..8 {
+            let chunk = [
+                array[i * 4],
+                array[i * 4 + 1],
+                array[i * 4 + 2],
+                array[i * 4 + 3],
+            ];
+            result ^= u32::from_le_bytes(chunk);
+        }
+        result
+    }
+
+    #[test]
+    fn zero_digest_folds_to_zero() {
+        assert_eq!(fold_hash_words(&[0u8; 32]), 0);
+    }
+
+    #[test]
+    fn identical_words_cancel_out() {
+        // Eight identical words XOR to zero (even count).
+        assert_eq!(fold_hash_words(&[0x01u8; 32]), 0);
+    }
+
+    #[test]
+    fn first_and_last_bytes_are_read_little_endian() {
+        let mut first = [0u8; 32];
+        first[0] = 1;
+        assert_eq!(fold_hash_words(&first), 1);
+
+        // Byte 31 is the most significant byte of the last word.
+        let mut last = [0u8; 32];
+        last[31] = 0x80;
+        assert_eq!(fold_hash_words(&last), 0x8000_0000);
+
+        let mut both = [0u8; 32];
+        both[0] = 1;
+        both[31] = 0x80;
+        assert_eq!(fold_hash_words(&both), 0x8000_0001);
+    }
+
+    #[test]
+    fn every_word_contributes() {
+        // One distinct bit per word: the fold is their union.
+        let mut digest = [0u8; 32];
+        for word in 0..8usize {
+            digest[word * 4] = 1u8 << word;
+        }
+        assert_eq!(fold_hash_words(&digest), 0xFF);
+    }
+
+    #[test]
+    fn matches_reference_implementation() {
+        // Deterministic pseudo-random digests (LCG), including all-0xFF.
+        let mut state: u32 = 0x1234_5678;
+        for _ in 0..64 {
+            let mut digest = [0u8; 32];
+            for byte in digest.iter_mut() {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                *byte = (state >> 24) as u8;
+            }
+            assert_eq!(fold_hash_words(&digest), reference(&digest));
+        }
+        assert_eq!(fold_hash_words(&[0xFFu8; 32]), reference(&[0xFFu8; 32]));
+    }
+}
+

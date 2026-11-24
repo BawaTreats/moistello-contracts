@@ -552,7 +552,7 @@ pub fn cancel_proposal(
     if proposal.status != ProposalStatus::Active {
         return Err(GovernanceError::ProposalNotDraftOrActive);
     }
-    if proposal.votes_for + proposal.votes_against + proposal.votes_abstain > 0 {
+    if proposal.votes_for > 0 || proposal.votes_against > 0 || proposal.votes_abstain > 0 {
         return Err(GovernanceError::VotingAlreadyStarted);
     }
     proposal.status = ProposalStatus::Cancelled;
@@ -770,7 +770,7 @@ pub fn get_proposals(env: &Env, status: ProposalStatus, limit: u32) -> Vec<Propo
                 out.push_back(p);
             }
         }
-        i += 1;
+        i = i.saturating_add(1);
     }
     out
 }
@@ -807,7 +807,7 @@ pub fn get_proposal_metadata_page(env: &Env, cursor: u64, limit: u32) -> Proposa
         {
             entries.push_back(proposal_metadata(proposal));
         }
-        id += 1;
+        id = id.saturating_add(1);
     }
     ProposalMetadataPage {
         entries,
