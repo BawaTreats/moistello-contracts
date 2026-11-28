@@ -32,6 +32,7 @@ ignore = [
     # classified "unsound" (not "vulnerability") and carries no known exploit.
     # Re-evaluate when heapless ≥ 0.8.x ships a fix or a viable replacement is available.
     "RUSTSEC-2026-0582", # heapless: IndexMap::insert broken invariant on u16::MAX-element maps
+    "RUSTSEC-2026-0486", # rustix: xattr functions mark unwritten bytes as initialized on zero-length buffer (transitive dependency)
 ]
 
 # ── Licenses ──────────────────────────────────────────────────────────────────
