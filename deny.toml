@@ -24,6 +24,7 @@ ignore = [
     "RUSTSEC-2026-0574", # heapless: FindMutView::pop after mutating could lead to use after free
     "RUSTSEC-2026-0579", # heapless: Deque from TryFrom implementation was wrong when full
     "RUSTSEC-2024-0436", # paste: no longer maintained (transitive dependency)
+    "RUSTSEC-2026-0486", # rustix: xattr functions mark unwritten bytes as initialized on zero-length buffer (transitive dependency)
 ]
 
 # ── Licenses ──────────────────────────────────────────────────────────────────
